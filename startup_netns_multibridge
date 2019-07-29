@@ -1,0 +1,74 @@
+#!/bin/bash
+
+
+
+# Creamos Network namespaces
+sudo ip netns add nsa
+sudo ip netns add nsb
+sudo ip netns add ns1
+sudo ip netns add ns2
+
+
+# Creamos veth
+sudo ip link add gateway type veth peer name switch
+sudo ip link add switch-nsa type veth peer name host-nsa
+sudo ip link add switch-nsb type veth peer name host-nsb
+sudo ip link add switch-ns1 type veth peer name host-ns1
+sudo ip link add switch-ns2 type veth peer name host-ns2
+
+
+# Mover a las netns las intf
+sudo ip link set dev host-nsa netns nsa
+sudo ip link set dev switch-ns1 netns nsa
+sudo ip link set dev switch-ns2 netns nsa
+sudo ip link set dev host-nsb netns nsb
+sudo ip link set dev host-ns1 netns ns1
+sudo ip link set dev host-ns2 netns ns2
+
+
+# Creamos el switch
+sudo brctl addbr switch-dev-1
+sudo ip netns exec nsa brctl addbr switch-dev-2
+
+# Asociar las intfs al switch
+sudo brctl addif switch-dev-1 switch switch-nsa switch-nsb
+sudo ip netns exec nsa brctl addif switch-dev-2 host-nsa switch-ns1 switch-ns2
+
+# Levantar intfs y dar ips
+sudo ip a a 10.0.0.1/24 dev gateway
+sudo ip netns exec nsb ip a a 10.0.0.2/24 dev host-nsb
+sudo ip netns exec ns1 ip a a 10.0.0.3/24 dev host-ns1
+sudo ip netns exec ns2 ip a a 10.0.0.4/24 dev host-ns2
+
+sudo ip link set dev gateway up
+sudo ip link set dev switch up
+sudo ip link set dev switch-dev-1 up
+sudo ip link set dev switch-nsa up
+sudo ip link set dev switch-nsb up
+
+sudo ip netns exec nsb ip link set dev lo up
+sudo ip netns exec nsb ip link set dev host-nsb up
+
+sudo ip netns exec nsa ip link set dev host-nsa up
+sudo ip netns exec nsa ip link set dev switch-dev-2 up
+sudo ip netns exec nsa ip link set dev switch-ns1 up
+sudo ip netns exec nsa ip link set dev switch-ns2 up
+
+sudo ip netns exec ns1 ip link set dev host-ns1 up
+sudo ip netns exec ns1 ip link set dev lo up
+sudo ip netns exec ns2 ip link set dev host-ns2 up
+sudo ip netns exec ns2 ip link set dev lo up
+
+
+# Rutas 
+sudo ip netns exec nsb ip route add default via 10.0.0.1 dev host-nsb
+sudo ip netns exec ns1 ip route add default via 10.0.0.1 dev host-ns1
+sudo ip netns exec ns2 ip route add default via 10.0.0.1 dev host-ns2
+#sudo ip netns exec nsa ip route add default via 10.0.0.1 dev host-nsa
+
+
+# Config hacia afuera
+sudo sysctl net.ipv4.ip_forward=1
+sudo iptables -t nat -A POSTROUTING -o enp0s3 -j MASQUERADE
+sudo sh -c "echo nameserver 8.8.8.8 >> /etc/resolv.conf"
+
